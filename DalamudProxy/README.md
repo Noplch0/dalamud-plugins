@@ -78,7 +78,6 @@ pwsh ./scripts/build-release.ps1 -SkipTests
 不要只移动 `DalamudProxy.dll`；发布包还包含：
 
 - `DalamudProxy.Core.dll`
-- `libs/0Harmony.dll`
 - `System.Security.Cryptography.ProtectedData.dll`
 
 ## 使用
@@ -129,7 +128,7 @@ pwsh ./scripts/build-release.ps1 -SkipTests
 
 ### Harmony 或拦截器不可用
 
-设置窗口会显示错误。此时插件不会静默地让请求直连；请检查是否是完整的发布 ZIP 被加载，以及 `libs/0Harmony.dll` 是否存在。
+设置窗口会显示错误。当前版本直接使用 Dalamud 自带的 `0Harmony 2.4.2`；发布 ZIP 不应再包含自己的 `0Harmony.dll`。如仍失败，请查看 Dalamud 日志中的完整异常。
 
 ## GitHub 发布
 
@@ -142,20 +141,21 @@ https://github.com/Noplch0/dalamud-plugins
 发布约定：
 
 - 根目录 `../repo.json` 维护全部插件的聚合清单
-- 本插件的 Release Tag 使用 `DalamudProxy-v0.1.0.0`
+- 本插件的 Release Tag 使用 `DalamudProxy-v0.1.0.1`
 - Release 资产必须命名为 `DalamudProxy.zip`
 - 下载地址：
 
 ```text
-https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.0/DalamudProxy.zip
+https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.1/DalamudProxy.zip
 ```
 
 版本号需要同时与以下位置保持一致：
 
 - `src/DalamudProxy/DalamudProxy.csproj`
 - 根目录 `../repo.json`
-- Git Tag，例如 `DalamudProxy-v0.1.0.0`
+- Git Tag，例如 `DalamudProxy-v0.1.0.1`
 
 ## 许可证
 
 MIT
+

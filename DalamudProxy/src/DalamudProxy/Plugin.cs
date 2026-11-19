@@ -52,8 +52,6 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
-        HarmonyLoader.EnsureLoaded(PluginInterface.AssemblyLocation.DirectoryName!);
-
         this.Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.NormalizeConfiguration();
         this.runtimePassword = this.DecryptPassword();

@@ -67,11 +67,16 @@ try {
     }
 
     $names = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
-    foreach ($required in @('DalamudProxy.dll', 'DalamudProxy.json', 'DalamudProxy.Core.dll', 'System.Security.Cryptography.ProtectedData.dll', 'libs/0Harmony.dll')) {
+    foreach ($required in @('DalamudProxy.dll', 'DalamudProxy.json', 'DalamudProxy.Core.dll', 'System.Security.Cryptography.ProtectedData.dll')) {
         if ($names -notcontains $required) {
             throw "Release zip is missing required entry: $required"
         }
     }
+
+    if ($names -contains '0Harmony.dll' -or $names -contains 'libs/0Harmony.dll') {
+        throw "Release zip must not bundle 0Harmony.dll; Dalamud provides it."
+    }
+
 }
 finally {
     $archive.Dispose()
@@ -82,4 +87,3 @@ Set-Content -LiteralPath (Join-Path $dist 'DalamudProxy.zip.sha256') -Value "$ha
 
 Write-Host "Created $targetZip"
 Write-Host "SHA256 $hash"
-

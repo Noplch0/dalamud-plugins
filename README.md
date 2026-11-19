@@ -14,7 +14,7 @@ https://raw.githubusercontent.com/Noplch0/dalamud-plugins/main/repo.json
 
 | 插件 | 版本 | 命令 | 说明 |
 | --- | --- | --- | --- |
-| [Dalamud Proxy](./DalamudProxy/) | 0.1.0.0 | `/dalamudproxy` | 按仓库和插件范围代理国服 Dalamud 插件市场的列表、图片及安装下载。 |
+| [Dalamud Proxy](./DalamudProxy/) | 0.1.0.1 | `/dalamudproxy` | 按仓库和插件范围代理国服 Dalamud 插件市场的列表、图片及安装下载。 |
 
 ## 仓库结构
 
@@ -59,7 +59,7 @@ pwsh ./scripts/build-release.ps1
 例如：
 
 ```text
-DalamudProxy-v0.1.0.0
+DalamudProxy-v0.1.0.1
 ```
 
 每个插件的发布 ZIP 文件名应与根目录 `repo.json` 中的下载地址保持一致。
