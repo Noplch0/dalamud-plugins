@@ -102,4 +102,45 @@ public sealed class ProxyTransportIntegrationTests
         var line = await proxy.RequestLine.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal("GET http://plugin-master.invalid/repo.json HTTP/1.1", line);
     }
+
+    [Fact]
+    public async Task CloneCanBeSentAfterOuterHttpClientMarksOriginalSent()
+    {
+        await using var proxy = new FakeHttpProxy();
+        var directProxy = new WebProxy($"http://127.0.0.1:{proxy.Port}") { BypassProxyOnLocal = false };
+        using var proxiedClient = new HttpClient(new SocketsHttpHandler
+        {
+            Proxy = directProxy,
+            UseProxy = true,
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(5),
+        };
+        using var outerClient = new HttpClient(new RequestCloneHandler(proxiedClient))
+        {
+            Timeout = TimeSpan.FromSeconds(5),
+        };
+
+        using var response = await outerClient.GetAsync("http://plugin.invalid/repo.json");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var line = await proxy.RequestLine.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("GET http://plugin.invalid/repo.json HTTP/1.1", line);
+    }
+
+    private sealed class RequestCloneHandler(HttpClient proxiedClient)
+        : DelegatingHandler(new SocketsHttpHandler())
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            using var clone = HttpRequestCloner.Clone(request);
+            return await proxiedClient.SendAsync(
+                clone,
+                HttpCompletionOption.ResponseContentRead,
+                cancellationToken);
+        }
+    }
 }
+

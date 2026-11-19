@@ -24,7 +24,7 @@ internal sealed class HttpInterceptor : IDisposable
     private readonly RequestLog requestLog;
     private readonly string dalamudVersion;
 
-    private ProxyRuleSet rules = ProxyRuleSet.Empty;
+    private InterceptionScope scope = InterceptionScope.All;
     private ProxyTransport? transport;
     private string? blockedReason;
     private int enabled;
@@ -64,18 +64,10 @@ internal sealed class HttpInterceptor : IDisposable
         try
         {
             if (sendAsync is not null)
-            {
-                this.harmony.Patch(
-                    sendAsync,
-                    prefix: new HarmonyMethod(typeof(HttpInterceptor), nameof(SendAsyncPrefix)));
-            }
+                this.harmony.Patch(sendAsync, prefix: new HarmonyMethod(typeof(HttpInterceptor), nameof(SendAsyncPrefix)));
 
             if (send is not null)
-            {
-                this.harmony.Patch(
-                    send,
-                    prefix: new HarmonyMethod(typeof(HttpInterceptor), nameof(SendPrefix)));
-            }
+                this.harmony.Patch(send, prefix: new HarmonyMethod(typeof(HttpInterceptor), nameof(SendPrefix)));
 
             this.Installed = true;
             this.log.Information(
@@ -98,31 +90,32 @@ internal sealed class HttpInterceptor : IDisposable
         }
     }
 
-    public void Configure(ProxySettings settings, ProxyRuleSet rules)
+    public void Configure(ProxySettings settings, InterceptionScope scope)
     {
-        Volatile.Write(ref this.rules, rules);
+        Volatile.Write(ref this.scope, scope);
         this.blockedReason = null;
-        var newTransport = settings.Enabled ? new ProxyTransport(settings, this.dalamudVersion) : null;
+        var newTransport = settings.Enabled && !scope.IsEmpty
+            ? new ProxyTransport(settings, this.dalamudVersion)
+            : null;
         var previous = Interlocked.Exchange(ref this.transport, newTransport);
-        Volatile.Write(ref this.enabled, settings.Enabled && newTransport is not null ? 1 : 0);
+        Volatile.Write(ref this.enabled, newTransport is not null ? 1 : 0);
         previous?.Dispose();
 
-        if (settings.Enabled)
+        if (newTransport is not null)
         {
             this.log.Information(
-                "DalamudProxy: 规则已更新，仓库={Repos}，下载={Downloads}，资源={Assets}",
-                rules.RepositoryCount,
-                rules.PluginDownloadCount,
-                rules.PluginAssetCount);
+                "DalamudProxy: 范围已更新，仓库读取={RepositoryReads}，插件下载={PluginDownloads}",
+                scope.RepositoryReads,
+                scope.PluginDownloads);
         }
     }
 
-    public void Block(ProxyRuleSet rules, string reason)
+    public void Block(InterceptionScope scope, string reason)
     {
-        Volatile.Write(ref this.rules, rules);
+        Volatile.Write(ref this.scope, scope);
         this.blockedReason = reason;
         Interlocked.Exchange(ref this.transport, null)?.Dispose();
-        Volatile.Write(ref this.enabled, rules.IsEmpty ? 0 : 1);
+        Volatile.Write(ref this.enabled, scope.IsEmpty ? 0 : 1);
     }
 
     public void Disable()
@@ -172,7 +165,10 @@ internal sealed class HttpInterceptor : IDisposable
         return false;
     }
 
-    private bool TryBeginRoute(HttpRequestMessage request, out MarketplaceOperation operation, out ProxyTransport selectedTransport)
+    private bool TryBeginRoute(
+        HttpRequestMessage request,
+        out MarketplaceOperation operation,
+        out ProxyTransport selectedTransport)
     {
         operation = default;
         selectedTransport = null!;
@@ -181,22 +177,26 @@ internal sealed class HttpInterceptor : IDisposable
             return false;
 
         if (request.RequestUri is null
-            || request.RequestUri.Scheme is not ("http" or "https")
+            || request.Method != HttpMethod.Get
+            || request.Content is not null
             || (request.Options.TryGetValue(ManagedRequestKey, out var managed) && managed))
         {
             return false;
         }
 
-        var currentRules = Volatile.Read(ref this.rules);
-        if (!currentRules.TryGetOperation(request.RequestUri, out operation))
-            return false;
-
+        var currentScope = Volatile.Read(ref this.scope);
         var stack = new StackTrace(2, false);
-        var typeNames = stack.GetFrames()
-            .Select(static frame => frame.GetMethod()?.DeclaringType?.FullName);
-        if (!currentRules.IsOperationAllowed(operation, typeNames))
+        var frames = stack.GetFrames().Select(static frame =>
+        {
+            var method = frame.GetMethod();
+            return new StackFrameInfo(method?.DeclaringType?.FullName, method?.Name);
+        });
+
+        var matched = MarketplaceOperationClassifier.Classify(frames, currentScope);
+        if (matched is null)
             return false;
 
+        operation = matched.Value;
         request.Options.Set(ManagedRequestKey, true);
         selectedTransport = Volatile.Read(ref this.transport)!;
         return true;
@@ -213,9 +213,11 @@ internal sealed class HttpInterceptor : IDisposable
         var result = "ok";
         try
         {
+            using var proxyRequest = HttpRequestCloner.Clone(request);
             var response = await selectedTransport
-                .SendAsync(request, cancellationToken, HttpCompletionOption.ResponseContentRead)
+                .SendAsync(proxyRequest, cancellationToken, HttpCompletionOption.ResponseContentRead)
                 .ConfigureAwait(false);
+            response.RequestMessage = request;
             statusCode = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
                 result = "http-error";
@@ -243,7 +245,9 @@ internal sealed class HttpInterceptor : IDisposable
         var result = "ok";
         try
         {
-            var response = selectedTransport.Send(request, cancellationToken);
+            using var proxyRequest = HttpRequestCloner.Clone(request);
+            var response = selectedTransport.Send(proxyRequest, cancellationToken);
+            response.RequestMessage = request;
             statusCode = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
                 result = "http-error";

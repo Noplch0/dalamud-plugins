@@ -1,23 +1,36 @@
 namespace DalamudProxy.Core;
 
+public sealed record StackFrameInfo(string? TypeName, string? MethodName);
+
 public static class MarketplaceOperationClassifier
 {
-    private static readonly IReadOnlyDictionary<MarketplaceOperation, string> TypePrefixes =
-        new Dictionary<MarketplaceOperation, string>
-        {
-            [MarketplaceOperation.RepositoryMaster] = "Dalamud.Plugin.Internal.Types.PluginRepository",
-            [MarketplaceOperation.PluginDownload] = "Dalamud.Plugin.Internal.PluginManager",
-            [MarketplaceOperation.PluginAsset] = "Dalamud.Interface.Internal.Windows.PluginImageCache",
-        };
+    private const string RepositoryTypePrefix = "Dalamud.Plugin.Internal.Types.PluginRepository";
+    private const string PluginManagerTypePrefix = "Dalamud.Plugin.Internal.PluginManager";
+    private const string DownloadMethodName = "DownloadPluginAsync";
 
-    public static bool Matches(MarketplaceOperation operation, string? typeFullName)
+    public static MarketplaceOperation? Classify(IEnumerable<StackFrameInfo> frames, InterceptionScope scope)
     {
-        if (string.IsNullOrEmpty(typeFullName) || !TypePrefixes.TryGetValue(operation, out var prefix))
-            return false;
+        foreach (var frame in frames)
+        {
+            if (scope.PluginDownloads && IsPluginDownload(frame))
+                return MarketplaceOperation.PluginDownload;
 
-        return typeFullName.StartsWith(prefix, StringComparison.Ordinal);
+            if (scope.RepositoryReads && IsRepositoryRead(frame))
+                return MarketplaceOperation.RepositoryMaster;
+        }
+
+        return null;
     }
 
-    public static bool MatchesAny(MarketplaceOperation operation, IEnumerable<string?> typeFullNames)
-        => typeFullNames.Any(name => Matches(operation, name));
+    public static bool IsRepositoryRead(StackFrameInfo frame)
+        => frame.TypeName?.StartsWith(RepositoryTypePrefix, StringComparison.Ordinal) == true;
+
+    public static bool IsPluginDownload(StackFrameInfo frame)
+    {
+        if (frame.TypeName?.StartsWith(PluginManagerTypePrefix, StringComparison.Ordinal) != true)
+            return false;
+
+        return frame.TypeName.Contains(DownloadMethodName, StringComparison.Ordinal)
+            || frame.MethodName?.Contains(DownloadMethodName, StringComparison.Ordinal) == true;
+    }
 }

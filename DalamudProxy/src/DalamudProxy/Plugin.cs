@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.Command;
@@ -16,7 +15,6 @@ namespace DalamudProxy;
 public sealed class Plugin : IDalamudPlugin
 {
     private const string CommandName = "/dalamudproxy";
-    private static readonly StringComparer UrlComparer = StringComparer.Ordinal;
 
     [PluginService]
     internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
@@ -27,10 +25,10 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService]
     internal static IPluginLog Log { get; private set; } = null!;
 
-
     [PluginService]
     internal static IFramework Framework { get; private set; } = null!;
-    private readonly object catalogLock = new();
+
+    private readonly object stateLock = new();
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private readonly CancellationTokenSource lifetime = new();
     private readonly WindowSystem windowSystem = new("DalamudProxy");
@@ -40,11 +38,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow configWindow;
 
     private IReadOnlyList<DalamudRepositoryInfo> repositories = Array.Empty<DalamudRepositoryInfo>();
-    private IReadOnlyList<PluginManifestInfo> manifests = Array.Empty<PluginManifestInfo>();
-    private IReadOnlySet<string> installedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private string? discoveryWarning;
     private string? refreshWarning;
-    private string catalogStatus = "尚未刷新";
+    private string status = "尚未刷新插件仓库";
     private bool refreshing;
     private string runtimePassword = string.Empty;
     private string? configurationError;
@@ -71,175 +67,64 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "打开 Dalamud Proxy 设置。",
         });
 
-        this.ReloadInstalledPluginNames();
         this.DiscoverRepositories();
-        this.ApplyProxyConfiguration(showError: false);
+        this.ApplyProxyConfiguration(showError: false, scheduleRefresh: false);
 
         if (this.Configuration.Enabled && this.Configuration.AutoRefresh)
             this.ScheduleInitialRefresh();
-        _ = this.RunCatalogSyncLoopAsync();
     }
 
+    internal Configuration Configuration { get; }
 
-    public Configuration Configuration { get; }
-
-    public RequestLog RequestLog => this.requestLog;
-
-    public string RuntimePassword => this.runtimePassword;
+    internal RequestLog RequestLog => this.requestLog;
 
     internal HttpInterceptor Interceptor => this.interceptor;
 
-    public string? ConfigurationError
+    internal string RuntimePassword => this.runtimePassword;
+
+    internal string? ConfigurationError
     {
         get
         {
-            lock (this.catalogLock)
+            lock (this.stateLock)
                 return this.configurationError;
         }
     }
 
-    internal CatalogViewState GetCatalogState()
+    internal ProxyViewState GetViewState()
     {
-        lock (this.catalogLock)
+        lock (this.stateLock)
         {
-            return new CatalogViewState(
-                this.repositories.ToArray(),
-                this.manifests.ToArray(),
-                this.installedPlugins,
+            return new ProxyViewState(
+                this.repositories,
                 this.discoveryWarning,
                 this.refreshWarning,
-                this.catalogStatus,
+                this.status,
                 this.refreshing);
         }
     }
 
-    public IReadOnlyList<string> SelectedRepositoryUrls
-    {
-        get
-        {
-            lock (this.catalogLock)
-                return this.Configuration.SelectedRepositoryUrls.ToArray();
-        }
-    }
-
-    public IReadOnlyList<string> SelectedPluginInternalNames
-    {
-        get
-        {
-            lock (this.catalogLock)
-                return this.Configuration.SelectedPluginInternalNames.ToArray();
-        }
-    }
-
-    public IReadOnlyList<string> GetSelectedRepositoryUrlSnapshot() => this.SelectedRepositoryUrls;
-
-    public bool IsRepositorySelected(string url)
-    {
-        var normalized = NormalizeOrOriginal(url);
-        lock (this.catalogLock)
-            return this.Configuration.SelectedRepositoryUrls.Contains(normalized, UrlComparer);
-    }
-
-    public bool ArePluginSelected(string internalName)
-    {
-        lock (this.catalogLock)
-            return this.Configuration.SelectedPluginInternalNames.Contains(internalName, StringComparer.OrdinalIgnoreCase);
-    }
-
-    public void SetRepositorySelected(string url, bool selected)
-    {
-        var normalized = NormalizeOrOriginal(url);
-        lock (this.catalogLock)
-        {
-            if (selected)
-            {
-                if (!this.Configuration.SelectedRepositoryUrls.Contains(normalized, UrlComparer))
-                    this.Configuration.SelectedRepositoryUrls.Add(normalized);
-            }
-            else
-            {
-                this.Configuration.SelectedRepositoryUrls.RemoveAll(
-                    item => string.Equals(NormalizeOrOriginal(item), normalized, StringComparison.Ordinal));
-            }
-        }
-    }
-
-    public void SetPluginSelected(string internalName, bool selected)
-    {
-        lock (this.catalogLock)
-        {
-            if (selected)
-            {
-                if (!this.Configuration.SelectedPluginInternalNames.Contains(internalName, StringComparer.OrdinalIgnoreCase))
-                    this.Configuration.SelectedPluginInternalNames.Add(internalName);
-            }
-            else
-            {
-                this.Configuration.SelectedPluginInternalNames.RemoveAll(
-                    item => string.Equals(item, internalName, StringComparison.OrdinalIgnoreCase));
-            }
-        }
-    }
-
-    public void SetAllPluginsSelected(bool selected)
-    {
-        var state = this.GetCatalogState();
-        var selectedRepos = new HashSet<string>(
-            this.GetSelectedRepositoryUrlSnapshot().Select(NormalizeOrOriginal),
-            UrlComparer);
-
-        if (!selected)
-        {
-            lock (this.catalogLock)
-                this.Configuration.SelectedPluginInternalNames.Clear();
-            return;
-        }
-
-        var relevant = state.Manifests
-            .Where(manifest => selectedRepos.Contains(NormalizeOrOriginal(manifest.RepositoryMasterUrl)))
-            .Select(static manifest => manifest.InternalName)
-            .ToArray();
-
-        foreach (var name in relevant)
-            this.SetPluginSelected(name, true);
-    }
-
-    public void SaveAndApplyConfiguration(string password, bool scheduleRefresh = true)
+    internal void SaveAndApplyConfiguration(string password, bool scheduleRefresh = true)
     {
         this.runtimePassword = password ?? string.Empty;
         this.ExtractInlineProxyCredentials();
         this.Configuration.ProtectedPassword = string.IsNullOrEmpty(this.runtimePassword)
             ? string.Empty
             : DpapiSecretStore.Protect(this.runtimePassword);
+
         this.Configuration.Username = this.Configuration.Username?.Trim() ?? string.Empty;
         this.Configuration.ProxyUrl = this.Configuration.ProxyUrl?.Trim() ?? string.Empty;
         this.Configuration.TestUrl = string.IsNullOrWhiteSpace(this.Configuration.TestUrl)
             ? "https://github.com/"
             : this.Configuration.TestUrl.Trim();
+
         this.NormalizeConfiguration();
         this.Configuration.Save();
-
         this.DiscoverRepositories();
         this.ApplyProxyConfiguration(showError: true, scheduleRefresh);
     }
 
-    public void RebuildRules()
-    {
-        var rules = this.BuildRuleSet();
-        if (!this.interceptor.Installed)
-            return;
-
-        if (this.TryCreateProxySettings(out var settings, out var error))
-        {
-            this.interceptor.Configure(settings, rules);
-            return;
-        }
-
-        if (this.Configuration.Enabled)
-            this.interceptor.Block(rules, error ?? "代理配置无效。");
-    }
-
-    public async Task RefreshCatalogAsync()
+    internal async Task RefreshRepositoriesAsync()
     {
         try
         {
@@ -249,65 +134,50 @@ public sealed class Plugin : IDalamudPlugin
         {
             return;
         }
+
         try
         {
-            this.SetRefreshing(true, "正在读取仓库并刷新插件清单…");
+            this.SetRefreshing(true, "正在刷新所有插件仓库…");
             this.DiscoverRepositories();
-            var selected = this.GetDiscoveredSelectedRepositoryUrls();
-            if (!this.TryCreateProxySettings(out var settings, out var proxyError))
+
+            if (!this.TryCreateProxySettings(out _, out var error))
             {
-                lock (this.catalogLock)
+                lock (this.stateLock)
                 {
-                    this.refreshWarning = proxyError;
-                    this.catalogStatus = "代理配置无效，已取消刷新";
+                    this.refreshWarning = error;
+                    this.status = "代理配置无效，已取消刷新";
                 }
 
-                return;
-            }
-
-            if (selected.Count == 0)
-            {
-                lock (this.catalogLock)
-                {
-                    this.manifests = Array.Empty<PluginManifestInfo>();
-                    this.refreshWarning = proxyError;
-                    this.catalogStatus = "请先勾选至少一个仓库";
-                }
-
-                this.RebuildRules();
                 return;
             }
 
             var result = await this.repositoryService
-                .RefreshSelectedAsync(selected, settings, this.lifetime.Token)
+                .RefreshAllRepositoriesAsync(this.lifetime.Token)
                 .ConfigureAwait(false);
 
-            lock (this.catalogLock)
+            lock (this.stateLock)
             {
-                this.manifests = result.Plugins;
-                this.refreshWarning = result.Warning ?? proxyError;
-                var managerText = result.ManagerRefreshSucceeded ? "Dalamud 列表已刷新" : "仅本地目标清单已刷新";
-                this.catalogStatus = $"{managerText}，共 {result.Plugins.Count} 个插件";
+                this.refreshWarning = result.Warning;
+                this.status = result.Success
+                    ? "插件仓库已由 Dalamud 刷新"
+                    : "Dalamud 仓库刷新失败";
             }
 
             this.DiscoverRepositories();
-            this.ReloadInstalledPluginNames();
-            this.RebuildRules();
-            Log.Information("DalamudProxy: 市场清单刷新完成，共 {Count} 个插件。", result.Plugins.Count);
+            Log.Information("DalamudProxy: 插件仓库刷新完成，success={Success}", result.Success);
         }
         catch (OperationCanceledException) when (this.lifetime.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            lock (this.catalogLock)
+            lock (this.stateLock)
             {
                 this.refreshWarning = ex.Message;
-                this.catalogStatus = "刷新失败";
+                this.status = "插件仓库刷新失败";
             }
 
-            Log.Error(ex, "DalamudProxy: 刷新插件市场失败。");
-            this.RebuildRules();
+            Log.Error(ex, "DalamudProxy: 刷新插件仓库失败。");
         }
         finally
         {
@@ -332,8 +202,7 @@ public sealed class Plugin : IDalamudPlugin
                 typeof(IDalamudPluginInterface).Assembly.GetName().Version?.ToString(3));
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
             cancellation.CancelAfter(TimeSpan.FromSeconds(15));
-            using var response = await transport.ProbeAsync(testUri, TimeSpan.FromSeconds(15), cancellation.Token)
-                .ConfigureAwait(false);
+            using var response = await transport.ProbeAsync(testUri, TimeSpan.FromSeconds(15), cancellation.Token).ConfigureAwait(false);
             return new ProxyTestResult(
                 response.IsSuccessStatusCode,
                 $"HTTP {(int)response.StatusCode} {response.ReasonPhrase} · {UriUtilities.SanitizeForLog(transport.ProxyUri)}");
@@ -344,48 +213,31 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    public ProxySettings BuildCurrentProxySettings(string password)
-        => new(
-            this.Configuration.Enabled,
-            this.Configuration.ProxyUrl,
-            string.IsNullOrWhiteSpace(this.Configuration.Username) ? null : this.Configuration.Username,
-            string.IsNullOrEmpty(password) ? null : password,
-            this.Configuration.TestUrl);
+    internal void ReloadRepositoryDiscovery() => this.DiscoverRepositories();
 
-    public void ReloadRepositoryDiscovery() => this.DiscoverRepositories();
-
-    public void OpenPluginInstaller()
+    internal void OpenPluginInstaller()
         => PluginInterface.OpenPluginInstallerTo(Dalamud.Interface.PluginInstallerOpenKind.AllPlugins);
-
-    public void ForgetMissingSelections()
-    {
-        var discovered = this.GetCatalogState().Repositories
-            .Select(static repository => NormalizeOrOriginal(repository.Url))
-            .ToHashSet(UrlComparer);
-        lock (this.catalogLock)
-        {
-            this.Configuration.SelectedRepositoryUrls.RemoveAll(
-                url => !discovered.Contains(NormalizeOrOriginal(url)));
-            this.Configuration.Save();
-        }
-
-        this.RebuildRules();
-    }
 
     private void NormalizeConfiguration()
     {
-        lock (this.catalogLock)
+        if (this.Configuration.Version < 2)
         {
-            this.Configuration.Version = 1;
-            this.Configuration.SelectedRepositoryUrls = this.Configuration.SelectedRepositoryUrls
-                .Where(static url => !string.IsNullOrWhiteSpace(url))
-                .Select(NormalizeOrOriginal)
-                .Distinct(UrlComparer)
-                .ToList();
-            this.Configuration.SelectedPluginInternalNames = this.Configuration.SelectedPluginInternalNames
-                .Where(static name => !string.IsNullOrWhiteSpace(name))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            this.Configuration.Version = 2;
+            this.Configuration.ProxyRepositoryReads = true;
+            this.Configuration.ProxyPluginDownloads = true;
+        }
+    }
+
+    private string DecryptPassword()
+    {
+        try
+        {
+            return DpapiSecretStore.Unprotect(this.Configuration.ProtectedPassword);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DalamudProxy: 已保存的代理密码无法解密，请重新输入。");
+            return string.Empty;
         }
     }
 
@@ -409,66 +261,44 @@ public sealed class Plugin : IDalamudPlugin
             UriFormat.UriEscaped);
     }
 
-    private string DecryptPassword()
-    {
-        try
-        {
-            return DpapiSecretStore.Unprotect(this.Configuration.ProtectedPassword);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DalamudProxy: 已保存的代理密码无法解密，请重新输入。");
-            return string.Empty;
-        }
-    }
-
-    private ProxyRuleSet BuildRuleSet()
-    {
-        lock (this.catalogLock)
-        {
-            return ProxyRuleSet.Build(
-                this.Configuration.SelectedRepositoryUrls,
-                this.manifests,
-                this.Configuration.SelectedPluginInternalNames);
-        }
-    }
-
     private void ApplyProxyConfiguration(bool showError, bool scheduleRefresh = true)
     {
         if (!this.interceptor.Installed)
         {
-            lock (this.catalogLock)
+            lock (this.stateLock)
                 this.configurationError = this.interceptor.InstallationError;
             return;
         }
 
         try
         {
+            var scope = this.BuildScope();
             if (!this.TryCreateProxySettings(out var settings, out var error))
             {
-                lock (this.catalogLock)
+                lock (this.stateLock)
                     this.configurationError = error;
-                this.interceptor.Block(this.BuildRuleSet(), error ?? "代理配置无效。");
+                this.interceptor.Block(scope, error ?? "代理配置无效。");
                 return;
             }
 
-            lock (this.catalogLock)
+            lock (this.stateLock)
                 this.configurationError = null;
-
-            var rules = this.BuildRuleSet();
-            this.interceptor.Configure(settings, rules);
+            this.interceptor.Configure(settings, scope);
 
             if (scheduleRefresh && this.Configuration.Enabled && this.Configuration.AutoRefresh)
-                _ = this.RefreshCatalogAsync();
+                _ = this.RefreshRepositoriesAsync();
         }
         catch (Exception ex)
         {
-            lock (this.catalogLock)
+            lock (this.stateLock)
                 this.configurationError = ex.Message;
-            this.interceptor.Block(this.BuildRuleSet(), ex.Message);
+            this.interceptor.Block(this.BuildScope(), ex.Message);
             Log.Error(ex, "DalamudProxy: 应用代理配置失败。");
         }
     }
+
+    private InterceptionScope BuildScope()
+        => new(this.Configuration.ProxyRepositoryReads, this.Configuration.ProxyPluginDownloads);
 
     private bool TryCreateProxySettings(out ProxySettings settings, out string? error)
     {
@@ -501,37 +331,16 @@ public sealed class Plugin : IDalamudPlugin
     {
         var result = this.repositoryService.Discover();
         var discovered = result.Repositories
-            .GroupBy(static repository => NormalizeOrOriginal(repository.Url), UrlComparer)
+            .GroupBy(static repository => repository.Url, StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
             .OrderBy(static repository => repository.Url, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        lock (this.catalogLock)
+        lock (this.stateLock)
         {
             this.repositories = discovered;
             this.discoveryWarning = result.Warning;
         }
-    }
-
-    private IReadOnlyList<string> GetDiscoveredSelectedRepositoryUrls()
-    {
-        var discovered = this.GetCatalogState().Repositories
-            .Select(static repository => NormalizeOrOriginal(repository.Url))
-            .ToHashSet(UrlComparer);
-        return this.GetSelectedRepositoryUrlSnapshot()
-            .Select(NormalizeOrOriginal)
-            .Where(discovered.Contains)
-            .Distinct(UrlComparer)
-            .ToArray();
-    }
-
-    private void ReloadInstalledPluginNames()
-    {
-        var names = PluginInterface.InstalledPlugins
-            .Select(static plugin => plugin.InternalName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        lock (this.catalogLock)
-            this.installedPlugins = names;
     }
 
     private void ScheduleInitialRefresh()
@@ -541,7 +350,7 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), this.lifetime.Token).ConfigureAwait(false);
-                await this.RefreshCatalogAsync().ConfigureAwait(false);
+                await this.RefreshRepositoriesAsync().ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (this.lifetime.IsCancellationRequested)
             {
@@ -553,73 +362,15 @@ public sealed class Plugin : IDalamudPlugin
         });
     }
 
-    private async Task RunCatalogSyncLoopAsync()
+    private void SetRefreshing(bool value, string? newStatus)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(45));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(this.lifetime.Token).ConfigureAwait(false))
-            {
-                var selected = this.GetDiscoveredSelectedRepositoryUrls();
-                if (selected.Count == 0)
-                    continue;
-
-                var current = this.repositoryService.ReadSelectedManifests(selected);
-                if (current.Count == 0)
-                    continue;
-
-                var previous = this.GetCatalogState().Manifests;
-                if (string.Equals(CatalogFingerprint(previous), CatalogFingerprint(current), StringComparison.Ordinal))
-                    continue;
-
-                lock (this.catalogLock)
-                {
-                    this.manifests = current;
-                    this.catalogStatus = "已同步 Dalamud 当前插件清单";
-                }
-
-                this.RebuildRules();
-            }
-        }
-        catch (OperationCanceledException) when (this.lifetime.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DalamudProxy: 后台同步插件清单失败。");
-        }
-    }
-
-    private static string CatalogFingerprint(IEnumerable<PluginManifestInfo> manifests)
-    {
-        return string.Join(
-            "\n",
-            manifests
-                .OrderBy(static item => item.RepositoryMasterUrl, StringComparer.Ordinal)
-                .ThenBy(static item => item.InternalName, StringComparer.OrdinalIgnoreCase)
-                .Select(static item => string.Join(
-                    "|",
-                    item.RepositoryMasterUrl,
-                    item.InternalName,
-                    item.DownloadLinkInstall,
-                    item.DownloadLinkUpdate,
-                    item.DownloadLinkTesting,
-                    item.IconUrl,
-                    string.Join(",", item.ImageUrls))));
-    }
-
-    private void SetRefreshing(bool value, string? status)
-    {
-        lock (this.catalogLock)
+        lock (this.stateLock)
         {
             this.refreshing = value;
-            if (status is not null)
-                this.catalogStatus = status;
+            if (newStatus is not null)
+                this.status = newStatus;
         }
     }
-
-    private static string NormalizeOrOriginal(string value)
-        => UriUtilities.TryNormalizeAbsolute(value, out var normalized) ? normalized : value.Trim();
 
     private void OnCommand(string command, string args) => this.ToggleConfigUi();
 
@@ -645,20 +396,11 @@ public sealed class Plugin : IDalamudPlugin
     }
 }
 
-internal sealed record CatalogViewState(
+internal sealed record ProxyViewState(
     IReadOnlyList<DalamudRepositoryInfo> Repositories,
-    IReadOnlyList<PluginManifestInfo> Manifests,
-    IReadOnlySet<string> InstalledPlugins,
     string? DiscoveryWarning,
     string? RefreshWarning,
     string Status,
     bool Refreshing);
 
 internal sealed record ProxyTestResult(bool Success, string Message);
-
-
-
-
-
-
-
