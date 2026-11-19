@@ -59,7 +59,13 @@ try {
     if (-not $manifestEntry) { throw 'Release zip is missing DalamudProxy.json' }
     $reader = [System.IO.StreamReader]::new($manifestEntry.Open())
     try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-    $repoEntries = Get-Content -LiteralPath (Join-Path $repositoryRoot 'repo.json') -Raw | ConvertFrom-Json
+    $repoRaw = Get-Content -LiteralPath (Join-Path $repositoryRoot 'repo.json') -Raw
+    $repoTrimmed = $repoRaw.Trim()
+    if (-not $repoTrimmed.StartsWith('[') -or -not $repoTrimmed.EndsWith(']')) {
+        throw "repo.json top-level value must be a JSON array"
+    }
+
+    $repoEntries = @($repoRaw | ConvertFrom-Json)
     $repo = $repoEntries | Where-Object InternalName -eq $manifest.InternalName | Select-Object -First 1
     if (-not $repo) { throw "repo.json does not contain $($manifest.InternalName)" }
     if ($manifest.InternalName -ne $repo.InternalName -or $manifest.AssemblyVersion -ne $repo.AssemblyVersion -or $manifest.DalamudApiLevel -ne $repo.DalamudApiLevel) {

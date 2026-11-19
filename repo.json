@@ -1,26 +1,28 @@
-{
-  "Author": "Noplch0",
-  "Name": "Dalamud Proxy",
-  "InternalName": "DalamudProxy",
-  "AssemblyVersion": "0.1.0.2",
-  "Description": "只代理 Dalamud 插件仓库读取以及插件安装、更新和测试版下载，不代理图片、游戏或其他插件运行时流量。",
-  "ApplicableVersion": "any",
-  "Tags": [
-    "proxy",
-    "plugin",
-    "market",
-    "network",
-    "china"
-  ],
-  "DalamudApiLevel": 15,
-  "LoadRequiredState": 2,
-  "LoadSync": true,
-  "CanUnloadAsync": false,
-  "LoadPriority": 1000,
-  "Punchline": "只让插件仓库读取和安装下载走你的代理。",
-  "AcceptsFeedback": true,
-  "RepoUrl": "https://github.com/Noplch0/dalamud-plugins/tree/main/DalamudProxy",
-  "DownloadLinkInstall": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip",
-  "DownloadLinkUpdate": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip",
-  "DownloadLinkTesting": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip"
-}
+[
+  {
+    "Author": "Noplch0",
+    "Name": "Dalamud Proxy",
+    "InternalName": "DalamudProxy",
+    "AssemblyVersion": "0.1.0.2",
+    "Description": "只代理 Dalamud 插件仓库读取以及插件安装、更新和测试版下载，不代理图片、游戏或其他插件运行时流量。",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "proxy",
+      "plugin",
+      "market",
+      "network",
+      "china"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 2,
+    "LoadSync": true,
+    "CanUnloadAsync": false,
+    "LoadPriority": 1000,
+    "Punchline": "只让插件仓库读取和安装下载走你的代理。",
+    "AcceptsFeedback": true,
+    "RepoUrl": "https://github.com/Noplch0/dalamud-plugins/tree/main/DalamudProxy",
+    "DownloadLinkInstall": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip",
+    "DownloadLinkUpdate": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip",
+    "DownloadLinkTesting": "https://github.com/Noplch0/dalamud-plugins/releases/download/DalamudProxy-v0.1.0.2/DalamudProxy.zip"
+  }
+]
