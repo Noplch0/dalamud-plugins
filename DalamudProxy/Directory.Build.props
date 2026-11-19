@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$(DALAMUD_HOME)' == '' And Exists('$(appdata)\XIVLauncherCN\addon\Hooks\dev')">
+    <DALAMUD_HOME>$(appdata)\XIVLauncherCN\addon\Hooks\dev</DALAMUD_HOME>
+  </PropertyGroup>
+</Project>
+
+

@@ -1,0 +1,37 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <AssemblyName>DalamudProxy</AssemblyName>
+    <RootNamespace>DalamudProxy</RootNamespace>
+    <Author>Noplch0</Author>
+    <Name>Dalamud Proxy</Name>
+    <Punchline>只让插件市场和安装下载走你的代理。</Punchline>
+    <Description>为国服 Dalamud 插件市场按仓库和插件范围设置单一 HTTP/HTTPS/SOCKS 代理。只代理 pluginmaster、所选插件图片及安装/更新下载，不影响游戏和其他插件运行时流量。命令：/dalamudproxy。</Description>
+    <RepoUrl>https://github.com/Noplch0/dalamud-plugins/tree/main/DalamudProxy</RepoUrl>
+    <Tags>proxy;plugin;market;network;china</Tags>
+    <PackageProjectUrl>https://github.com/Noplch0/dalamud-plugins/tree/main/DalamudProxy</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <CanUnloadAsync>false</CanUnloadAsync>
+    <LoadRequiredState>2</LoadRequiredState>
+    <LoadSync>true</LoadSync>
+    <LoadPriority>1000</LoadPriority>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DalamudProxy.Core\DalamudProxy.Core.csproj" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" GeneratePathProperty="true">
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(PkgLib_Harmony)\lib\net10.0\0Harmony.dll"
+          Link="libs\0Harmony.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+</Project>
+
